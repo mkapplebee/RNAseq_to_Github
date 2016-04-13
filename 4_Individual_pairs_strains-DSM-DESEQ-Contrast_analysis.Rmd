@@ -1,0 +1,190 @@
+---
+title: "3. Number of DEGs between pairs of deletion strains"
+author: "Kenyon"
+date: "April 12, 2016"
+output: 
+  html_document:
+    toc: true
+---
+
+In this file, the RNAseq data is analyzed for batch effects between biological replicates.  The data are the 21 samples of DSM-grown LiaS-McpA-NhaK set of mutants, harvested in late-exponential phase growth.  (Batch effect analysis begins on line 126)
+
+###1. Import Data, Libraries, and Functions
+
+```{r echo=FALSE}
+
+#Gene expression data:
+gtab<-read.csv("~/Bacillus_subtilis/RNAseq/Rockhopper_results2/NC_000964_transcripts_rawcounts_forDSEQ2.csv", row.names=1)
+
+#sample table:
+samp3<- read.csv("~/Bacillus_subtilis/RNAseq/Rockhopper_results2/Index_sheet-samplesums-Rockhopper2-b.csv", row.names=1)
+
+#Gene annotation file:
+gdf<-read.csv("~/Bacillus_subtilis/RNAseq/Bsub_annotation/Bsub_Functional_Annotation_2016-04-12.csv",row.names=1)
+
+gdf$ME_name<-as.character(gdf$ME_name)
+gdf$ME_name <- sub("^$", "nonphage", gdf$ME_name)
+gdf$ME_name<-as.factor(gdf$ME_name)
+
+# Modify samp3: convert some columns to factors and establish strain order levels
+samp3$GR_column<-as.factor(as.character(samp3$GR_Column))
+samp3$strain<-as.factor(as.character(samp3$strain))
+samp3$strain<-factor(samp3$strain,levels=c("AM373","LiaS","McpA","NhaK","LM","LN","MN"))
+samp3$date<-as.factor(as.character(samp3$date))
+
+#Modify gtab3: remove confounding and low-count genes
+#remove rrn genes from gene expression data
+rrn_rows<-which(substring(row.names(gtab),1,3)=="rrn")
+gtab2<-gtab[-rrn_rows,]
+
+#remove low-count genes, threshold of at least 50 counts between all samples
+gtab3 <- gtab2[ rowSums(gtab2) > 50, ]
+
+```
+
+Number of rRNA genes: `r nrow(gtab)-nrow(gtab2)` genes dropped (from `r nrow(gtab)`)
+
+Number of genes with <50 counts:  `r nrow(gtab2)-nrow(gtab3)` genes dropped
+
+Note about file gdf: While looking up the genes indivdiually, I also noticed that many of the DEGs belong to mobile genetic element [ICEBs1](http://www.ncbi.nlm.nih.gov/pubmed/17511812); however, these genes are not included in any of the annotation, so I created two new columns, `Phage_ME` and `ME_name` to encode it; `ME_name` encodes either the name of the phage/mobile element or "nonphage"
+
+```{r echo=FALSE,eval=FALSE}
+to examine iceBS1 genes: 
+icebs<-which(gdf$Start>529500 & gdf$Stop <550000)
+gdf[icebs,]
+
+```
+
+Libraries used:
+
+```{r message=FALSE, warning=FALSE,echo=FALSE}
+library(DESeq2)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+```
+
+#### Useful Functions
+
+Load function`top_genes` to make a results table, order and filter the genes by padj, and add basic annotation from file `gdf`
+
+basic "Functional" annotation in `gdf` is from [subtiwiki](http://subtiwiki.uni-goettingen.de/wiki/index.php/Categories), flatfile downloaded 7/17/2015
+
+```{r}
+source('~/Bacillus_subtilis/RNAseq/RNAseq_to_Github/top_genes_function.R')
+```
+
+
+Functional Annotation Table generator function:
+`factor_tab(tg_df, factor_name)`
+creates table of in "FunctNameX" columns of DE gene table to show what functions are highly represented, and the total number of genes in that functional classification set for the whole genome (not quite a statistically-rigorous functional enrichment analysis yet)
+
+```{r message=FALSE}
+
+source('~/Bacillus_subtilis/RNAseq/RNAseq_to_Github/factor_tab_function.R')
+```
+
+ktab function: formats and reorginizes results dataframe into a cleaner "kable" table  
+(coded within this document but not printed out)
+
+```{r echo=FALSE}
+
+ktab<-function(x){
+  
+  log_padj<-log(x[,6],base=10)
+  x$padj<-log_padj
+  colnames(x)[6]<-"log10.padj"
+  for(i in c(2:6)){
+    x[,i]<-signif(x[,i],digits=2)
+  }
+  x[,1]<-trunc(x[,1])
+  x<-x[,c(8,7,10:13,9,15,6,2,1)]
+  
+  kable(x,format="markdown")
+}
+
+```
+
+### 2. Run DESEQ2
+
+```{r message=FALSE, warning=FALSE}
+
+#generate DESeqData object
+  # design takes into account date (RNAseq batch) and strain identity
+ddsBsub<-DESeqDataSetFromMatrix(countData = gtab3,colData = samp3,design= ~date+strain)
+
+#run DESeq on object
+ds<-DESeq(ddsBsub)
+res<-results(ds)  #to generate a 'results' table from the DESeqDataSet object 'ds'
+
+#rlog trans
+rld<-rlog(ddsBsub,blind=FALSE)
+
+#estimate size factors
+dds<-estimateSizeFactors(ddsBsub)
+
+```
+
+
+### 3. Number of Differentially-expressed genes between each pair of strains
+
+1. Generate table that creates all pair-wise combinations of the 7 strains
+
+```{r width=160, echo=FALSE}
+
+options(width=160)
+strain_names<-levels(samp3$strain)
+comb7<-combn(1:7,2)
+combst<-comb7
+
+#replace indicies in combst table with strain names
+for (i in 1:7){
+combst<-replace(combst,which(comb7[,]==i),strain_names[i])}
+
+#kable(combst,format="markdown",col.names=c(1:ncol(combst)))
+```
+
+2. Generate contrasts from each pair of strians in combst
+ - name of each analysis is the concatenation of both strain names
+
+```{r}
+
+#The following function, "contrastx", generates a contrast given a vector with the names of both strains
+   #This function also names the output based on the names of the strains
+
+contrastx<-function(x){
+  
+  out<-results(ds,contrast=c("strain",x[1],x[2]))  #calculate DEGs between strain1 and strain2
+  out<-out[order(out$padj),]
+  assign(paste0(x[1],"_",x[2]),out,envir = .GlobalEnv)  #each analysis is named "strain1_strain2"
+  }
+
+res_cont<-apply(combst,MARGIN = 2,FUN=contrastx)
+
+```
+
+
+3. Table of number of differentially-expressed genes between each pair:
+```{r echo=FALSE}
+n_df<-vector()
+n_df2<-vector()
+for(i in 1:length(res_cont)){
+  x1<-res_cont[[i]]
+  x2<-nrow(x1[which(x1$padj<0.01),])  #number of rows/genes with padj<0.01
+  n_df<-c(n_df,x2)
+  x3<-nrow(x1[which(x1$padj<0.001),])
+  n_df2<-c(n_df2,x3)
+}
+
+num_df<-cbind.data.frame(paste0(combst[1,],"_",combst[2,]),n_df,n_df2)
+colnames(num_df)<-c("number of DEGs:","p>0.01","p>0.001")
+num_df
+```
+
+ **Discussion of Table:**
+
+ * $\Delta$ liaS associated with the most gene expression changes  
+ * Relative to reference strain AM373, the $\Delta$ liaS single-KO strain has the most genes differentially expressed, followed by the LiaS-combination mutants  
+   + McpA, MN, and NhaK have very few expression changes  
+   + LiaS strain likely has largest number of expression changes due to failure to purge pTSC-Tet plasmid  
+   * LiaS also has a large number of DEGs when contrasted with strains harboring McpA mutation; this is not really seen in LN vs McpA, so may be due to pTSC-Tet
