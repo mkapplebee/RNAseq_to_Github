@@ -1,0 +1,162 @@
+---
+title: "2. Analysis of Antibiotic Effects"
+author: "Kenyon"
+date: "April 12, 2016"
+output: 
+  html_document:
+    toc: true
+---
+
+In this file, the RNAseq data is analyzed for batch effects between biological replicates.  The data are the 21 samples of DSM-grown LiaS-McpA-NhaK set of mutants, harvested in late-exponential phase growth.  (Batch effect analysis begins on line 126)
+
+###1. Import Data, Libraries, and Functions
+
+```{r echo=FALSE}
+
+#Gene expression data:
+gtab<-read.csv("~/Bacillus_subtilis/RNAseq/Rockhopper_results2/NC_000964_transcripts_rawcounts_forDSEQ2.csv", row.names=1)
+
+#sample table:
+samp3<- read.csv("~/Bacillus_subtilis/RNAseq/Rockhopper_results2/Index_sheet-samplesums-Rockhopper2-b.csv", row.names=1)
+
+#Gene annotation file:
+gdf<-read.csv("~/Bacillus_subtilis/RNAseq/Bsub_annotation/Bsub_Functional_Annotation_2016-04-12.csv",row.names=1)
+
+gdf$ME_name<-as.character(gdf$ME_name)
+gdf$ME_name <- sub("^$", "nonphage", gdf$ME_name)
+gdf$ME_name<-as.factor(gdf$ME_name)
+
+# Modify samp3: convert some columns to factors and establish strain order levels
+samp3$GR_column<-as.factor(as.character(samp3$GR_Column))
+samp3$strain<-as.factor(as.character(samp3$strain))
+samp3$strain<-factor(samp3$strain,levels=c("AM373","LiaS","McpA","NhaK","LM","LN","MN"))
+samp3$date<-as.factor(as.character(samp3$date))
+
+#Modify gtab3: remove confounding and low-count genes
+#remove rrn genes from gene expression data
+rrn_rows<-which(substring(row.names(gtab),1,3)=="rrn")
+gtab2<-gtab[-rrn_rows,]
+
+#remove low-count genes, threshold of at least 50 counts between all samples
+gtab3 <- gtab2[ rowSums(gtab2) > 50, ]
+
+```
+
+Number of rRNA genes: `r nrow(gtab)-nrow(gtab2)` genes dropped (from `r nrow(gtab)`)
+
+Number of genes with <50 counts:  `r nrow(gtab2)-nrow(gtab3)` genes dropped
+
+Note about file gdf: While looking up the genes indivdiually, I also noticed that many of the DEGs belong to mobile genetic element [ICEBs1](http://www.ncbi.nlm.nih.gov/pubmed/17511812); however, these genes are not included in any of the annotation, so I created two new columns, `Phage_ME` and `ME_name` to encode it; `ME_name` encodes either the name of the phage/mobile element or "nonphage"
+
+```{r echo=FALSE,eval=FALSE}
+to examine iceBS1 genes: 
+icebs<-which(gdf$Start>529500 & gdf$Stop <550000)
+gdf[icebs,]
+
+```
+
+Libraries used:
+
+```{r message=FALSE, warning=FALSE}
+library(DESeq2)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+```
+
+#### Useful Functions
+
+Load function`top_genes` to make a results table, order and filter the genes by padj, and add basic annotation from file `gdf`
+
+basic "Functional" annotation in `gdf` is from [subtiwiki](http://subtiwiki.uni-goettingen.de/wiki/index.php/Categories), flatfile downloaded 7/17/2015
+
+```{r}
+source('~/Bacillus_subtilis/RNAseq/RNAseq_to_Github/top_genes_function.R')
+```
+
+
+Functional Annotation Table generator function:
+`factor_tab(tg_df, factor_name)`
+creates table of in "FunctNameX" columns of DE gene table to show what functions are highly represented, and the total number of genes in that functional classification set for the whole genome (not quite a statistically-rigorous functional enrichment analysis yet)
+
+```{r message=FALSE}
+
+source('~/Bacillus_subtilis/RNAseq/RNAseq_to_Github/factor_tab_function.R')
+```
+
+ktab function: formats and reorginizes results dataframe into a cleaner "kable" table  
+(coded within this document but not printed out)
+
+```{r echo=FALSE}
+
+ktab<-function(x){
+  
+  log_padj<-log(x[,6],base=10)
+  x$padj<-log_padj
+  colnames(x)[6]<-"log10.padj"
+  for(i in c(2:6)){
+    x[,i]<-signif(x[,i],digits=2)
+  }
+  x[,1]<-trunc(x[,1])
+  x<-x[,c(8,7,10:13,9,15,6,2,1)]
+  
+  kable(x,format="markdown")
+}
+
+```
+
+
+### 2. Examine effect of antibiotic markers
+
+#### 2.1 Kanamycin 
+Examine whether there is evidence that the kanamycin resistance marker correlates to gene expression changes.  In samp3, there is a column "kan", that indicates whether a strain harbors the kan resistance gene (yes/no) that is used to perform this analysis.
+```{r message=FALSE}
+
+options(width=150)
+resKan<-results(DESeq(DESeqDataSetFromMatrix(countData = gtab3,colData = samp3,design= ~date+kan)))
+resKansig<-resKan[order(resKan$padj),]
+kable(resKansig[1:4,],format="markdown",digits = 4)
+```
+
+*  See that only NhaK expression is the only DEG between kan-resistant and kan-sensitive samples, which is expected since kan is only in NhaK-deletion strains  
+
+
+#### 2.2 Zeocin
+
+```{r message=FALSE,width=120}
+resZeo<-results(DESeq(DESeqDataSetFromMatrix(countData = gtab3,colData = samp3,design= ~date+zeo)))
+resZeosig<-resZeo[order(resZeo$padj),]
+kable(resZeosig[1:4,],format="markdown",digits=4)
+
+```
+
+* See a bunch of predicted RNAs occupy top ranked most differentially expressed  
+
+* only top one (pred_RNA_3206218bp) is stat sig (10^-31^); that locus is within mcpA gene  
+* next one in list is the opposite strand of the yvyD gene(a sigma modulator), and then opposite strand of 5'end of qoxB (quinone)  
+
+
+**Plots of RNA 3206218 and mcpA transcription levels, by strain and by presence of zeocin cassette:**
+
+```{r echo=FALSE}
+
+par(mfrow=c(2,2))
+plotCounts(DESeqDataSetFromMatrix(countData = gtab3,colData = samp3,design= ~date+zeo),gene="pred_RNA_3206218bp",intgroup="strain", col=c("black","red","blue"),pch=19)
+plotCounts(DESeqDataSetFromMatrix(countData = gtab3,colData = samp3,design= ~date+zeo),gene="mcpA",intgroup="strain", col=c("black","red","blue"),pch=19)
+plotCounts(DESeqDataSetFromMatrix(countData = gtab3,colData = samp3,design= ~date+zeo),gene="pred_RNA_3206218bp",intgroup="zeo", col=c("black","red","blue"),pch=19, main="3206218bp, zeo-marker presence")
+plotCounts(DESeqDataSetFromMatrix(countData = gtab3,colData = samp3,design= ~date+zeo),gene="mcpA",intgroup="zeo", col=c("black","red","blue"),pch=19, main="mcpA gene, zeo-marker presence")
+
+```
+
+Summary conclusions, zeocin effects:  
+* `pred_RNA_3206218bp` is only elevated in strains with zeocin cassette, ie, the McpA and MN strain  
+
+* _why isn't mcpA expression very low in all of the mcpA-deletion strains?_
+  
+..* both effects may be from transcription of zeocin gene and its immediate upstream region, which was put on the opposite strand of mcpA;  however, in LM the antiboitic cassette was completely removed by Cre recombinase, so the antibiotic is not driving transcription in that region  
+
+*Explatation:*
+This CLC workbench image of its mapping of these reads shows that the bulk of the mcpA gene had very few reads (ie, was successfully deleted), but a glut of reads of the non-deleted 3'end of the gene (mcpA is encoded on bottom strand) that likely account for a relatively high total count of reads found for the gene in these strains.  
+![mcpA mapping image](McpA-Zeo-mapping.jpg)
+
+The top bar in the above image displays the genes in displayed section of the mapped genome, with the position of the mcpA gene indicated by the blue box.  The mapped reads of each library (one per strain) are disiplayed bellow.  The name of the library indicates the strain between the two undercores.  Circles highlight the 3' end of the mcpA gene in strains McpA and MN, where there are an accumulation of reads that account for the high total of reads recorded for the gene despite the gene being non-functional - as the transcripts are clearly missing most of the gene as designed.

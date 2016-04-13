@@ -1,0 +1,396 @@
+---
+title: "1. Analysis of Batch Effects"
+author: "Kenyon"
+date: "April 12, 2016"
+output: 
+  html_document:
+    toc: true
+---
+
+In this file, the RNAseq data is analyzed for batch effects between biological replicates.  The data are the 21 samples of DSM-grown LiaS-McpA-NhaK set of mutants, harvested in late-exponential phase growth.  (Batch effect analysis begins on line 126)
+
+###1. Import Data, Libraries, and Functions
+
+```{r}
+
+#Gene expression data:
+gtab<-read.csv("~/Bacillus_subtilis/RNAseq/Rockhopper_results2/NC_000964_transcripts_rawcounts_forDSEQ2.csv", row.names=1)
+
+#sample table:
+samp3<- read.csv("~/Bacillus_subtilis/RNAseq/Rockhopper_results2/Index_sheet-samplesums-Rockhopper2-b.csv", row.names=1)
+
+#Gene annotation file:
+gdf<-read.csv("~/Bacillus_subtilis/RNAseq/Bsub_annotation/Bsub_Functional_Annotation_2016-04-12.csv",row.names=1)
+
+gdf$ME_name<-as.character(gdf$ME_name)
+gdf$ME_name <- sub("^$", "nonphage", gdf$ME_name)
+gdf$ME_name<-as.factor(gdf$ME_name)
+
+# Modify samp3: convert some columns to factors and establish strain order levels
+samp3$GR_column<-as.factor(as.character(samp3$GR_Column))
+samp3$strain<-as.factor(as.character(samp3$strain))
+samp3$strain<-factor(samp3$strain,levels=c("AM373","LiaS","McpA","NhaK","LM","LN","MN"))
+samp3$date<-as.factor(as.character(samp3$date))
+
+#Modify gtab3: remove confounding and low-count genes
+#remove rrn genes from gene expression data
+rrn_rows<-which(substring(row.names(gtab),1,3)=="rrn")
+gtab2<-gtab[-rrn_rows,]
+
+#remove low-count genes, threshold of at least 50 counts between all samples
+gtab3 <- gtab2[ rowSums(gtab2) > 50, ]
+
+```
+
+Number of rRNA genes: `r nrow(gtab)-nrow(gtab2)` genes dropped (from `r nrow(gtab)`)
+
+Number of genes with <50 counts:  `r nrow(gtab2)-nrow(gtab3)` genes dropped
+
+Note about file gdf: While looking up the genes indivdiually, I also noticed that many of the DEGs belong to mobile genetic element [ICEBs1](http://www.ncbi.nlm.nih.gov/pubmed/17511812); however, these genes are not included in any of the annotation, so I created two new columns, `Phage_ME` and `ME_name` to encode it; `ME_name` encodes either the name of the phage/mobile element or "nonphage"
+
+```{r echo=FALSE,eval=FALSE}
+to examine iceBS1 genes: 
+icebs<-which(gdf$Start>529500 & gdf$Stop <550000)
+gdf[icebs,]
+
+```
+
+Libraries used:
+
+```{r message=FALSE, warning=FALSE}
+library(DESeq2)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+```
+
+#### Useful Functions
+
+Load function`top_genes` to make a results table, order and filter the genes by padj, and add basic annotation from file `gdf`
+
+basic "Functional" annotation in `gdf` is from [subtiwiki](http://subtiwiki.uni-goettingen.de/wiki/index.php/Categories), flatfile downloaded 7/17/2015
+
+```{r}
+source('~/Bacillus_subtilis/RNAseq/RNAseq_to_Github/top_genes_function.R')
+```
+
+
+Functional Annotation Table generator function:
+`factor_tab(tg_df, factor_name)`
+creates table of in "FunctNameX" columns of DE gene table to show what functions are highly represented, and the total number of genes in that functional classification set for the whole genome (not quite a statistically-rigorous functional enrichment analysis yet)
+
+```{r message=FALSE}
+
+source('~/Bacillus_subtilis/RNAseq/RNAseq_to_Github/factor_tab_function.R')
+```
+
+ktab function: formats and reorginizes results dataframe into a cleaner "kable" table  
+(coded within this document but not printed out)
+
+```{r echo=FALSE}
+
+ktab<-function(x){
+  
+  log_padj<-log(x[,6],base=10)
+  x$padj<-log_padj
+  colnames(x)[6]<-"log10.padj"
+  for(i in c(2:6)){
+    x[,i]<-signif(x[,i],digits=2)
+  }
+  x[,1]<-trunc(x[,1])
+  x<-x[,c(8,7,10:13,9,15,6,2,1)]
+  
+  kable(x,format="markdown")
+}
+
+```
+
+### 2. Run DESEQ2
+
+```{r message=FALSE, warning=FALSE}
+
+#generate DESeqData object
+  # design takes into account date (RNAseq batch) and strain identity
+ddsBsub<-DESeqDataSetFromMatrix(countData = gtab3,colData = samp3,design= ~date+strain)
+
+#run DESeq on object
+ds<-DESeq(ddsBsub)
+res<-results(ds)  #to generate a 'results' table from the DESeqDataSet object 'ds'
+
+#rlog trans
+rld<-rlog(ddsBsub,blind=FALSE)
+
+#estimate size factors
+dds<-estimateSizeFactors(ddsBsub)
+
+```
+
+### 3. Batch Effects
+
+**DESeq2 QC analysis showed some batch effects in data; can now explore what genes are responsible and their functional groups**
+
+Known differences between batches:
+
+```{r }
+par(mfrow=c(1,2))
+
+stripchart(samp3$avg_OD~samp3$date,vertical=TRUE,ylab="OD(600)",main="OD at sample collection")
+stripchart(samp3$avgVmax~samp3$date,vertical=TRUE,ylab="OD(600nm)/hr",main="max Growth Rate")
+
+```
+
+* 20-Mar batch was collected over a wider OD range than the others
+* 20-Mar batch also acheived somewhat lower maxGR
+
+#### 3.1 Principle Component Analysis
+
+Plot of PC1 vs PC2 shows:  
+* batch "Mar21" is largely on the upper range of PC1 compared to most other measures, while the 3 liaS-deletion strains compose the lower-most range of PC1  
+* batch "20-Mar" is clustered on upper range of PC2  
+
+```{r echo=FALSE,fig.height=5,fig.width=7}
+
+#PCA plot by batch    
+plotPCA(rld, intgroup = "date")+
+  ggtitle("Principle Component 1 vs 2")+
+  theme(plot.title = element_text(lineheight=2, face="bold",size=18))
+```
+
+#### Contrast 1: 21-Mar vs other batches 
+DESEQ analysis using batch at factor, by creating a factor that distinguishes "21-Mar" batch from the other two
+
+
+
+```{r }
+isMar21<-relevel(as.factor(ifelse(samp3$date=="21-Mar","21-Mar","other")),ref="other")
+
+sampb1<-cbind(samp3,isMar21)
+resb1<-results(DESeq(DESeqDataSetFromMatrix(countData = gtab3,colData = sampb1,design= ~strain+isMar21)))
+B1<-top_genes(resb1,num=length(which(resb1$padj<0.05)))
+
+```
+
+Top 5 differentially-expressed genes (based lowest p-adjusted value):
+
+```{r echo=FALSE}
+
+ktab(B1[1:5,])
+
+```
+
+
+* top_genes function selects genes from the DESeq analysis with differential expression above a significance threshold (padj<0.05 here), and also adds several columns of functional annotation to each gene.    
+    + The four __"FuncName"__ columns refer to annotation available from subtiwiki.org; the gdf-file also has GO annotation, but for this analysis the subtiwiki annotation was easier to work with.  
+    + __ME_name__ describes whether the gene is associated with a mobile element or transposon  
+    + for __predicted RNAs__, the closest gene is reported, whether the RNA is encoded within the gene or up- or downstream of it, and which strand it is on relative to this gene. If the gene is also differentially expressed in the given contrast, "diffExpr" + BSU# of the gene is also printed.  (Further improvements of this analysis could include adding whether both the gene and pred_RNA change expression in the same direction)  
+
+* the most drastically changed transcripts in this contrast are mostly predicted_RNAs 
+  
+  
+__Table of DEGs (differentially-expressed genes) based on their level-1 Functions: __ 
+
+DEGs: Number of differentially expressed genes
+all_in_cat: total number of genes in genome in this catagory
+perc: the percentage of genes in this category that were dif. expressed
+Up/Dwn: Number of DEGs in category that had increased or decreased expression relative to the reference level
+
+```{r}
+factor_tab(B1,"FuncName1")
+```
+
+* over half of the Differentially Expressed Genes (DEGs) are pred_RNAs, and almost all of them are downreguated  
+* metabolism and cell process DEGs are also generally more upregulated  
+
+Functional group, level 2:
+
+```{r echo = FALSE,set-options}
+
+options(width=500)
+factor_tab(B1,"FuncName2")
+
+```
+
+* amino acid metabolism, additional metabolic pathways, carbon metabolism, electron transport DEGs are all generally up compared to other batches - whereas protein synthesis is down
+
+* 21-Mar samples were collected within an OD range sampled by the other two batches, using the same batch of LB, so the cause of these metabolic differences is not clear
+
+*GoH genes in set:*
+  
+* The deleted genes were selected because they are all connected to the GoH protein interaction network  
+* In this analysis, examine how many other GoH-associated genes and identified hub proteins have differential expressed based on this contrast, encoded by the GoH.sum column (in top_gene-produced files)
+*  GoH.sum column entry "GoH gene 3 cssS" means:
+    + it is a gene profiled in the GoH network, but it is not a Hub, 
+    + it interacts with 3 other GoH proteins, 
+    + including target gene cssS (cssS not part of this set of deletion strains though) 
+
+```{r echo=FALSE}
+ktab(B1[grep("GoH",B1$GoH.sum),])
+
+```
+
+* #GoH hub proteins: 1
+    + [ydbI](http://subtiwiki.uni-goettingen.de/bank/index.php?gene=BSU04480&action=Go) - Unknown function, slightly downregulated
+*  #GoH genes: 2
+    + though none are directly connected to any of the three deleted target genes
+    + both are related to metabolism, and have increased expression in the 21-Mar batch
+    + should explore their secondary connectivity to any deleted target genes in a later analysis
+    
+  
+
+#### Contrast 2: 21-Mar vs other batches
+
+Same as above, but contrasting 20-Mar samples vs. the other two batches
+
+```{r}
+isMar20<-relevel(as.factor(ifelse(samp3$date=="20-Mar","20-Mar","other")),ref="other")
+
+sampc1<-cbind(samp3,isMar20)
+resc1<-results(DESeq(DESeqDataSetFromMatrix(countData = gtab3,colData = sampc1,design= ~strain+isMar20)))
+C1<-top_genes(resc1,num=length(which(resc1$padj<0.05)))
+
+```
+
+Top 5 DEGs:  
+```{r echo=FALSE}
+
+ktab(C1[1:5,])
+
+```
+
+
+* "Groups of genes", two predicted RNAs located within other DEGs, and two tRNAs were most significantly different between the two datasets
+
+Functional groups of DEGs:  
+```{r}
+factor_tab(C1,"FuncName1")
+```
+
+* 20% of metabolic genes have differential expression, most of them down!
+
+Functional Level 2 categories:  
+
+  within "Metabolism" FuncName1 category:
+```{r }
+factor_tab(C1[which(C1$FuncName1=="Metabolism"),],"FuncName2")
+```
+ 
+ *see that within metabolism, almost all classes are generally less expressed in the Mar-20 batch - except nucleotide metabolism, which has increased transcription
+
+ 
+..other FuncName2 catagories:
+```{r }
+factor_tab(C1[-which(C1$FuncName1=="Metabolism"),],"FuncName2")
+```
+
+* see that aside from reduced metabolism, this batch has increased expression of many transporters and membrane proteins
+ 
+ * The slowed metabolism of the 20-Mar batch is also demostrated by the lower max GRs achieved by the cultures on that day
+    + this also contributed to the cultures being harvested across a slightly wider OD range on that date
+
+
+
+**GoH analysis:**
+
+* 13 GoH genes differentially expressed
+* Including 1 Hub gene - same one as before
+        + [ydbI](http://subtiwiki.uni-goettingen.de/bank/index.php?gene=BSU04480&action=Go) - Unknown function, slightly downregulated
+
+```{r echo=FALSE}
+ktab(C1[grep("GoH",C1$GoH.sum),])
+
+```
+
+Can see that ydbI is upregulated in 20-Mar batch, and downregulated in 21-Mar:
+
+```{r echo=FALSE}
+
+plotCounts(DESeqDataSetFromMatrix(countData = gtab3,colData = sampc1,design= ~strain+isMar20),gene="ydbI",intgroup="date", col=c("black","red","blue"),pch=19)
+
+```
+
+ * __Overall, this suggests that most of the expression variance in this dataset is due to slightly different growth rates on different days, and differences in the OD when the cultures were harvested.__
+     + ydbI, which is of unknown function, may be transcriptionally-sensitive to metabolic rate
+ 
+  
+#### 3.2 DEGs underlying Poisson Clustering:
+
+The samp3 file includes a factor named "cluster" based on the groups defined by Poisson clustering this group (see `Rock2-DeSeq-walkthrough_in_markdown`), which are marked and labeled in the following image:
+
+![Poisson Clustering Heatmap](Poisson_clusters.jpg)
+
+> Note: The clustering was done with a file with the batch names mis-labeled; 27-Feb = 13-Mar, 13-Mar = Mar20, Mar20 = Mar21;
+
+Most 20-Mar samples (13-Mar in figure) and the LiaS-single KO strains all fall in the Z-group, suggesting this group may can generally be characterized as having slower growth than the A-clusters.
+
+
+
+```{r }
+par(mfrow=c(1,2))
+
+stripchart(samp3$avg_OD~samp3$cluster,vertical=TRUE,ylab="OD(600)",main="ODcollect by cluster")
+stripchart(samp3$avgVmax~samp3$cluster,vertical=TRUE,ylab="OD(600nm)/hr",main="max Growth Rate by cluster")
+
+```
+
+There is slight correlation between the Poisson cluster and maxGR reached by each sample, in which the "A" clusters generally acheived faster growth rates.  However, there seems to be little relationship to OD at which the cells were harvested.
+
+(although there is a lot of overlap in the growth rate ranges spanned by each group)
+
+__DEG analysis of cluster A v Z: __  (cluster Z is reference) 
+
+Top 5 DEGs:
+```{r }
+
+isAZ<-relevel(as.factor(ifelse(substring(samp3$cluster,1,1)=="A","clustA","clustZ")),ref="clustZ")
+
+sampaz1<-cbind(samp3,isAZ)
+resAZ1<-results(DESeq(DESeqDataSetFromMatrix(countData = gtab3,colData = sampaz1,design= ~strain+isAZ)))
+AZ1<-top_genes(resAZ1,num=length(which(resAZ1$padj<0.05)))
+
+ktab(AZ1[1:5,])
+
+```
+
+Over 1000 DEGs found!
+
+Many top DEGs in the "A" cluster seem to be involved in nitrogen/amino acid metabolism; utilization of urea and biosynthesis of amino acids
+
+
+Functional categories of DEGs:
+
+```{r}
+print("FuncName1 Categories:")
+factor_tab(AZ1,"FuncName1")
+print("FuncName2 Categories within Metabolism:")
+factor_tab(AZ1[which(AZ1$FuncName1=="Metabolism"),],"FuncName2")
+print("FuncName2 Categories within Cellular processes:")
+factor_tab(AZ1[which(AZ1$FuncName1=="Cellular processes"),],"FuncName2")
+print("FuncName2 Categories within Information Processing:")
+factor_tab(AZ1[which(AZ1$FuncName1=="Information processing"),],"FuncName2")
+factor_tab(AZ1[which(AZ1$FuncName2=="exponential and early post-exponential lifestyles"),],"FuncName3")
+```
+
+* Functional analysis basically re-interates that the group "A" clusters have increased metabolism, related to increased amino acid/nitrogen and carbon metabolism, electron transport, and expression of stress response genes.  Also have increased expression of many motility and chemotaxis genes.
+
+
+**GoH analysis:**
+
+GoH network genes among DEGs: `r nrow(AZ1[grep("GoH",AZ1$GoH.sum),])`
+
+Many GoH genes have cluster-based variation in expression, but their discovery at this level of analysis may indicate that they respond to batch effects rather than to the induced genetic perturbation / that they are physilogically important rather than that they contribute to explaining any effects of the induced deletions
+
+However, whether these genes form a cluster within the GoH network could be further investigated.
+
+GoH Hubs found:
+```{r echo=FALSE}
+ktab(AZ1[grep("Hub",AZ1$GoH.sum),])
+
+```
+
+All GoH Genes found:
+```{r echo=FALSE}
+ktab(AZ1[grep("GoH",AZ1$GoH.sum),])
+
+```
+
+
