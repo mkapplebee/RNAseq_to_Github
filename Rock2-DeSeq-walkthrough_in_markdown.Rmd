@@ -21,12 +21,15 @@ One of the libraries (A) was discarded after examining scatterplots betweeen lik
 
 The data was mapped to the B. subtilis 168 genome using both CLC workbench and Rockhopper.  Rockhopper-mapped data chosen after discoving it was able to successfully map slightly more reads, likely because it takes into account operon structure (it does not discard reads that map to the intersection of genes in the same operon). 
 
+![Rockhopper settings](Rockhopper_settings.jpg)
+
 ####Importing Data files
 ```{r}
 gtab3<-read.csv("~/Bacillus_subtilis/RNAseq/Rockhopper_results2/NC_000964_transcripts_rawcounts_forDSEQ2.csv", row.names=1)
 
 samp3<- read.csv("~/Bacillus_subtilis/RNAseq/Rockhopper_results2/Index_sheet-samplesums-Rockhopper2-b.csv", row.names=1)
 
+#note:  Index_sheet-samplesums-Rockhopper2-b is a repaired version of Index_sheet-samplesums-Rockhopper2 which indicated that the 21-Mar RNAseq set had been dropped, rather than 28-Feb; however, the file names indicate Sample_RGMA001-7 (28-Feb) were the ones genuinely not included
 ```
 
 **gtab3**:  table of mapped RNAseq counts.  Rows = genes, Columns = samples
