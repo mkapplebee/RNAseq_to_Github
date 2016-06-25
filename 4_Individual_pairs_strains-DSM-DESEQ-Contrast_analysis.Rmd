@@ -40,24 +40,20 @@ gtab2<-gtab[-rrn_rows,]
 #remove low-count genes, threshold of at least 50 counts between all samples
 gtab3 <- gtab2[ rowSums(gtab2) > 50, ]
 
-```
-
-Number of rRNA genes: `r nrow(gtab)-nrow(gtab2)` genes dropped (from `r nrow(gtab)`)
-
-Number of genes with <50 counts:  `r nrow(gtab2)-nrow(gtab3)` genes dropped
-
-Note about file gdf: While looking up the genes indivdiually, I also noticed that many of the DEGs belong to mobile genetic element [ICEBs1](http://www.ncbi.nlm.nih.gov/pubmed/17511812); however, these genes are not included in any of the annotation, so I created two new columns, `Phage_ME` and `ME_name` to encode it; `ME_name` encodes either the name of the phage/mobile element or "nonphage"
-
-```{r echo=FALSE,eval=FALSE}
-to examine iceBS1 genes: 
-icebs<-which(gdf$Start>529500 & gdf$Stop <550000)
-gdf[icebs,]
+print("Data imported:  raw counts, table of samples, gene annotations")
 
 ```
 
-Libraries used:
+#### Dropped genes:
+    
+    Number of rRNA genes: `r nrow(gtab)-nrow(gtab2)` genes dropped (from `r nrow(gtab)`)
+    
+    Number of genes with <50 counts:  `r nrow(gtab2)-nrow(gtab3)` genes dropped
 
-```{r message=FALSE, warning=FALSE,echo=FALSE}
+
+#### Libraries used:
+
+```{r message=FALSE, warning=FALSE}
 library(DESeq2)
 library(dplyr)
 library(knitr)
@@ -66,9 +62,9 @@ library(ggplot2)
 
 #### Useful Functions
 
-Load function`top_genes` to make a results table, order and filter the genes by padj, and add basic annotation from file `gdf`
+Function`top_genes` makes a results table, orders and filters the genes by padj, and adds basic annotation from file `gdf`
 
-basic "Functional" annotation in `gdf` is from [subtiwiki](http://subtiwiki.uni-goettingen.de/wiki/index.php/Categories), flatfile downloaded 7/17/2015
+The "Functional" annotation in `gdf` is from [subtiwiki](http://subtiwiki.uni-goettingen.de/wiki/index.php/Categories), flatfile downloaded 7/17/2015
 
 ```{r}
 source('~/Bacillus_subtilis/RNAseq/RNAseq_to_Github/top_genes_function.R')
@@ -83,6 +79,7 @@ creates table of in "FunctNameX" columns of DE gene table to show what functions
 
 source('~/Bacillus_subtilis/RNAseq/RNAseq_to_Github/factor_tab_function.R')
 ```
+
 
 ktab function: formats and reorginizes results dataframe into a cleaner "kable" table  
 (coded within this document but not printed out)
@@ -104,6 +101,18 @@ ktab<-function(x){
 }
 
 ```
+
+
+**Note about file gdf:**    
+While looking up the genes indivdiually, I also noticed that many of the DEGs belong to mobile genetic element [ICEBs1](http://www.ncbi.nlm.nih.gov/pubmed/17511812); however, these genes are not included in any of the annotation, so I created two new columns, `Phage_ME` and `ME_name` to encode it; `ME_name` encodes either the name of the phage/mobile element or "nonphage"
+
+```{r echo=FALSE,eval=FALSE}
+to examine iceBS1 genes: 
+icebs<-which(gdf$Start>529500 & gdf$Stop <550000)
+gdf[icebs,]
+
+```
+
 
 ### 2. Run DESEQ2
 
@@ -186,5 +195,3 @@ num_df
  * $\Delta$ liaS associated with the most gene expression changes  
  * Relative to reference strain AM373, the $\Delta$ liaS single-KO strain has the most genes differentially expressed, followed by the LiaS-combination mutants  
    + McpA, MN, and NhaK have very few expression changes  
-   + LiaS strain likely has largest number of expression changes due to failure to purge pTSC-Tet plasmid  
-   * LiaS also has a large number of DEGs when contrasted with strains harboring McpA mutation; this is not really seen in LN vs McpA, so may be due to pTSC-Tet

@@ -80,18 +80,29 @@ img {
 <p>In this file, the RNAseq data is analyzed for batch effects between biological replicates. The data are the 21 samples of DSM-grown LiaS-McpA-NhaK set of mutants, harvested in late-exponential phase growth. (Batch effect analysis begins on line 126)</p>
 <div id="import-data-libraries-and-functions" class="section level3">
 <h3>1. Import Data, Libraries, and Functions</h3>
-<p>Number of rRNA genes: 30 genes dropped (from 4849)</p>
-<p>Number of genes with &lt;50 counts: 207 genes dropped</p>
-<p>Note about file gdf: While looking up the genes indivdiually, I also noticed that many of the DEGs belong to mobile genetic element <a href="http://www.ncbi.nlm.nih.gov/pubmed/17511812">ICEBs1</a>; however, these genes are not included in any of the annotation, so I created two new columns, <code>Phage_ME</code> and <code>ME_name</code> to encode it; <code>ME_name</code> encodes either the name of the phage/mobile element or “nonphage”</p>
-<p>Libraries used:</p>
+<pre><code>## [1] &quot;Data imported:  raw counts, table of samples, gene annotations&quot;</code></pre>
+<div id="dropped-genes" class="section level4">
+<h4>Dropped genes:</h4>
+<pre><code>Number of rRNA genes: 30 genes dropped (from 4849)
+
+Number of genes with &lt;50 counts:  207 genes dropped</code></pre>
+</div>
+<div id="libraries-used" class="section level4">
+<h4>Libraries used:</h4>
+<pre class="r"><code>library(DESeq2)
+library(dplyr)
+library(knitr)
+library(ggplot2)</code></pre>
+</div>
 <div id="useful-functions" class="section level4">
 <h4>Useful Functions</h4>
-<p>Load function<code>top_genes</code> to make a results table, order and filter the genes by padj, and add basic annotation from file <code>gdf</code></p>
-<p>basic “Functional” annotation in <code>gdf</code> is from <a href="http://subtiwiki.uni-goettingen.de/wiki/index.php/Categories">subtiwiki</a>, flatfile downloaded 7/17/2015</p>
+<p>Function<code>top_genes</code> makes a results table, orders and filters the genes by padj, and adds basic annotation from file <code>gdf</code></p>
+<p>The “Functional” annotation in <code>gdf</code> is from <a href="http://subtiwiki.uni-goettingen.de/wiki/index.php/Categories">subtiwiki</a>, flatfile downloaded 7/17/2015</p>
 <pre class="r"><code>source('~/Bacillus_subtilis/RNAseq/RNAseq_to_Github/top_genes_function.R')</code></pre>
 <p>Functional Annotation Table generator function: <code>factor_tab(tg_df, factor_name)</code> creates table of in “FunctNameX” columns of DE gene table to show what functions are highly represented, and the total number of genes in that functional classification set for the whole genome (not quite a statistically-rigorous functional enrichment analysis yet)</p>
 <pre class="r"><code>source('~/Bacillus_subtilis/RNAseq/RNAseq_to_Github/factor_tab_function.R')</code></pre>
 <p>ktab function: formats and reorginizes results dataframe into a cleaner “kable” table<br />(coded within this document but not printed out)</p>
+<p><strong>Note about file gdf:</strong><br />While looking up the genes indivdiually, I also noticed that many of the DEGs belong to mobile genetic element <a href="http://www.ncbi.nlm.nih.gov/pubmed/17511812">ICEBs1</a>; however, these genes are not included in any of the annotation, so I created two new columns, <code>Phage_ME</code> and <code>ME_name</code> to encode it; <code>ME_name</code> encodes either the name of the phage/mobile element or “nonphage”</p>
 </div>
 </div>
 <div id="run-deseq2" class="section level3">
@@ -159,9 +170,7 @@ res_cont&lt;-apply(combst,MARGIN = 2,FUN=contrastx)</code></pre>
 <ul>
 <li><span class="math">\(\Delta\)</span> liaS associated with the most gene expression changes<br /></li>
 <li>Relative to reference strain AM373, the <span class="math">\(\Delta\)</span> liaS single-KO strain has the most genes differentially expressed, followed by the LiaS-combination mutants<br /></li>
-<li>McpA, MN, and NhaK have very few expression changes<br /></li>
-<li>LiaS strain likely has largest number of expression changes due to failure to purge pTSC-Tet plasmid<br /></li>
-<li>LiaS also has a large number of DEGs when contrasted with strains harboring McpA mutation; this is not really seen in LN vs McpA, so may be due to pTSC-Tet</li>
+<li>McpA, MN, and NhaK have very few expression changes</li>
 </ul>
 </div>
 
